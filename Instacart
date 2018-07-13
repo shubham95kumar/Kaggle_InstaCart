@@ -1,0 +1,255 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun 26 02:36:32 2018
+
+@author: Shubham Kumar
+"""
+"""Classification problem: predicting if a user will buy a product again
+Final dataset will look like order_id, product_id, reordered_or_not, time of order, week of order, 
+
+
+"""
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+aisles = pd.read_csv('aisles.csv') #matching aisle and aisle id
+departments = pd.read_csv('departments.csv') # id and department
+products  = pd.read_csv('products.csv')  # description of products with aisle and department id
+order_products_train = pd.read_csv('order_products_train.csv')
+#order and product ids, order in which products were added, product reordered or not
+order_products_prior = pd.read_csv('order_products_prior.csv')
+#prior implies orders made prior to their last order 
+order = pd.read_csv('orders.csv')
+#eval_set: defines the class to which an order belongs(prior, train, test)
+#orders has a user centered data which provides all the orders placed by each 
+#user in chronological order
+from pylab import rcParams
+    
+products = pd.merge(products, aisles, how = 'left', on ='aisle_id')
+products = pd.merge(products,departments, how = 'left', on ='department_id')
+
+order_products_prior_1 = pd.merge(order_products_prior, order, how ='left', on ='order_id')
+order_products_prior.shape
+order_products_train = pd.merge(order_products_train, order, how ='left', on ='order_id' )
+order_products_test = order.loc[order.eval_set == 'test',['order_id', 'user_id', 
+                      'order_number', 'order_dow','order_hour_of_day', 
+                      'days_since_prior_order']]
+
+"""Product Specific Features
+Additional Features:Probability it is reordered after the first order
+total reorders/total order_id count
+
+"""
+user_count = np.unique(order['user_id'].values).shape[0]
+product_count = np.unique(order_products_prior_1['product_id'].values).shape[0]
+order_count = order['order_id'].shape[0]
+
+#Proportion of customers who re-ordered this product
+reordered_items = order_products_prior_1.loc[order_products_prior_1.reordered == 1]
+reordered = reordered_items.pivot_table(values = ['user_id','order_id'] , index =
+            'product_id', aggfunc = {'user_id':lambda x: len(x.unique()), 'order_id': 'count'})
+reordered.columns = ['reorder_count', 'reorder_user_count']
+
+item_1 = order_products_prior_1.pivot_table(values = ['order_id','user_id',
+        'order_hour_of_day','days_since_prior_order', 'order_dow'], index = 'product_id', 
+         aggfunc = {'order_id':'count','user_id':lambda x: len(x.unique()), 'order_hour_of_day':
+        'median', 'days_since_prior_order':'median', 'order_dow':'median'})
+
+
+item_table = item_1.merge(reordered, how = 'left', left_index=True, right_index =True)
+item_table.fillna(0, inplace=True)
+item_table.columns = ['order_freq_days','weekday','time_of_day','order_count', 'user_count', 'reorder_count', 'reorder_user_count']
+item_table['%_reorder_user_count'] = item_table['reorder_user_count']/item_table['user_count']
+item_table['mean_order_per_user'] = item_table['order_count']/item_table['user_count']
+item_table['%_reorder_count'] = item_table['reorder_count']/item_table['order_count']
+item_table['%_user_count'] = item_table['user_count']/user_count
+item_table['%_order_count'] = item_table['order_count']/order_count 
+item_table.drop(['user_count', 'order_count'], axis =1, inplace=True)
+item_table.drop(['reorder_count','reorder_user_count'], axis =1, inplace=True)
+#Plot a scatter_matrix
+scatter_plot = pd.scatter_matrix(item_table, grid =True, figsize = (20,20))
+"""Observations from scatter_plot:
+1) Distribution of each feature:
+    .order_freq_days: Normal Distribution with peak at 7 and small std
+    .weekday : similar to Normal Dist with comparitively large std
+    .time_of_day: Normal Dist with very small std
+    .order_count,user_count,reorder_count,reorder_user_count:
+        All of these are affected by surge in orders and users for a product
+        Highlt Left-Skewed Distribution
+    .%_reorder_user_count: Left-Skewed Normal Dist  
+    There is a cap at 80%
+    
+    .mean_order_per_user: Steep exponential decline in orders per user with increase in value
+    This shows that most of the products have low order_per_user count
+    
+    .%_reorder_count: Near Normal Distriution with large no of products which 
+    have a low %_reorder 
+"""
+
+
+"""User-Specific features
+Proportion of aisles/ departments has this user ever purchased from
+
+Department from which this user reorders most frequently(mode) - Perform OneHot Encoding on department feature and label 
+
+%_item -Proportion of products ordererd - unique products purchased/total product count
+
+%_reordered_ item
+
+item_per_order - Number of products per Order: Total number of product_id/total order_id of this user
+
+reordered_item_per_order 
+
+%_orders: orders made by user/total orders
+
+Median with time_of_day, freq_in_days, weekday - order_id_level
+
+Additional features: Probaility that he re-orders: total reorders/total product_ids
+How many of the user’s orders contained no previously purchased items
+"""
+aisle_count = aisles.shape[0]
+department_count = departments.shape[0]
+from scipy import stats
+products.drop(['product_name','aisle', 'department'], axis =1, inplace=True)
+order_products_prior_2 =  order_products_prior_1.merge(products, how ='left', on = 'product_id')
+
+user_1 = order_products_prior_2.pivot_table(values= ['order_id','product_id',
+        'aisle_id','department_id','order_hour_of_day','days_since_prior_order',
+        'order_dow'], index ='user_id', aggfunc = {'order_id':lambda x: len(x.unique()), 
+        'product_id':[lambda x: len(x.unique()),'count'], 'order_hour_of_day':
+        'median', 'days_since_prior_order':'median', 'order_dow':'median',
+        'aisle_id':lambda x: len(x.unique()), 'department_id':[lambda x: len(x.unique()), stats.mode]})
+"""how similar are the orders of each user
+whether a product was there in the last order
+"""
+#converting counts into percentage
+user_1['%_order'] = user_1['order_id']/order_count
+user_1['%_aisle'] = user_1['aisle_id']/aisle_count
+user_1['%_department'] = user_1.loc[:,('department_id','<lambda>')]/department_count
+user_1['%_item'] = user_1.loc[:,('product_id', '<lambda>')]/product_count
+
+order_per_user = order.pivot_table(values = 'order_id', index = 'user_id', aggfunc = lambda x: len(x.unique()))
+user_1['item_per_order'] = user_1.loc[:,('product_id', 'count')]/order_per_user['order_id']
+
+#Accssesing just the mode of dept for each user and leaving the count of each dept
+a = user_1.loc[:,('department_id','mode')]
+b= [each[0][0] for each in a]
+c = pd.DataFrame(np.array(b), index = user_1.index)
+c.columns = ['mode_dept']
+user_1 = pd.concat([c, user_1], axis =1)
+user_1.columns = user_1.columns.get_level_values(0)
+user_1.columns = [''.join(col).strip() for col in user_1.columns.values]
+
+user_table = user_1.drop(['aisle_id<lambda>',
+                          'department_id<lambda>',
+                          'department_idmode',
+                          'order_id<lambda>',
+                          'product_id<lambda>', 
+                          'product_idcount'], axis =1)
+
+user_table.columns = ['freq_dept', 'order_freq_days', 'weekday', 'time_of_day'
+                      ,'%_order', '%_aisle',
+       '%_department', '%_item', 'item_per_order']
+
+product_reorder = reordered_items.pivot_table(values ='product_id', index='user_id',  
+                            aggfunc =[lambda x: len(x.unique()),'count'] )
+product_reorder.columns = product_reorder.columns.get_level_values(0)
+product_reorder.columns = [''.join(col).strip() for col in product_reorder.columns.values]
+product_reorder.columns = ['unique_reorders', 'total_reorders']
+product_reorder['%_reordered_item'] = product_reorder['unique_reorders']/user_1.loc[:,'product_id<lambda>']
+product_reorder['reordered_item_per_order'] = product_reorder['total_reorders']/order_per_user['order_id']
+
+user_table = pd.concat([product_reorder.drop(['unique_reorders', 'total_reorders'], axis =1), user_table], axis =1)
+
+"""User_item features:
+frequency in days with which he reorders a particular item
+days since he last ordered that item - !
+relationship of the item with day of week and hour of day
+position of item in this user's orders 
+% of orders in which this item appeared for this user
+if this item was there in his last order 
+Probability that he reorders a particular product: 1/total no of unique products bought
+Number of orders in which this item appeared consecutively
+"""
+user_item_1 = order_products_prior_2.pivot_table(values=['order_id',  'add_to_cart_order', 'order_dow',
+                                                'order_hour_of_day','days_since_prior_order'],
+                                                 index = ['user_id', 'product_id'], aggfunc = {'order_id': 'count', 
+                                                'add_to_cart_order':'median','order_dow':'median',
+                                                'order_hour_of_day':'median','days_since_prior_order':'median'})
+
+user_item_1.columns = ['add_to_cart_order', 'days_since_prior_order', 'order_dow',
+       'order_hour_of_day', 'item_order_count']
+prob = user_item_1['item_order_count']
+prob = prob.div(order_per_user['order_id'], level='user_id', axis =0)
+user_item_1['item_order_prob'] = prob
+prob_table = user_item_1.loc[:,['item_order_count', 'item_order_prob']]
+prob_table = pd.merge(prob_table, order_per_user,how = 'left', left_index=True, right_index = True)
+
+train_model = order_products_prior_1.merge(item_table, how = 'left', left_on = 'product_id', right_index = True)
+train_model = train_model.merge(user_table, how ='left', left_on = 'user_id', right_index = True, suffixes = ('_item', '_user'), copy=False)
+target = train_model['outcome']
+train_model.drop('outcome', axis =1 , inplace =True)
+X_train, X_test, y_train, y_test = train_test_split(train_model, targte, test_size =0.30, random_state =1)
+
+"""Perform XGBoost"""
+
+import xgboost as xgb
+from xgboost.sklearn import XGBRegressor
+from modelFit import modelfit
+
+xgb1 = XGBRegressor(eta = 0.1,subsample = 0.7, colsample_bytree = 0.8, objective = 'reg:linear', nthread =4, \
+           seed =1)
+#target_var = 'Premium'
+#IDcol = 'ID'
+#predictors = [x for x in train_data.columns if x not in [target_var, IDcol]]
+#modelfit(xgb1,train_data,predictors)
+xgb_param = xgb1.get_xgb_params()
+xgtrain = xgb.DMatrix(X_train, label=y_train)
+cvresult = xgb.cv(xgb_param, xgtrain, num_boost_round= 1000,
+                   nfold = 5, metrics = 'rmse', early_stopping_rounds = 50)
+xgb1.set_params(max_depth = 9,learning_rate = 0.1,min_child_weight = 1 , subsample=0.8, 
+                                                 colsample_bytree=0.8, gamma = 0.1,
+                                                 n_estimators = 721, objective= 'reg:linear',
+                                                 nthread=4, scale_pos_weight=1, 
+                                                 seed=27)
+xgb1.fit(train_data.values, target.values, eval_metric = 'rmse')
+
+#Operations on test data
+test_data = pd.get_dummies(test_data)
+test_data = test_data.iloc[:, 2:]
+test_data.Var_37 = temp_numeric.Var_37
+final = xgb1.predict(test_data.values)
+submission = pd.DataFrame({'a': IDcol, "Premium": final})
+
+submission.to_csv("submission_2.csv")
+
+"""Hyperparameter tuning"""
+#y_pred= xgb1.predict(X_test)
+#error= mean_squared_error(y_pred,y_test)
+scores = cross_val_score(estimator=xgb1,
+                     X=train_data.values,
+                     y=target.values,scoring = 'neg_mean_squared_error',
+                     cv=5,
+                     n_jobs=1)
+print('CV accuracy scores: %s' % scores)
+print('CV accuracy: %.3f +/- %.3f' % (np.mean(scores), np.std(scores)))
+feat_imp = pd.Series(xgb1.booster().get_fscore()).sort_values(ascending=False)
+feat_imp.plot(kind='bar', title='Feature Importances')
+plt.ylabel('Feature Importance Score')
+
+param_test1 = {"learning_rate" : [x/100 for x in range(5, 15,2)] 
+# 'max_depth':np.arange(3,10,2),
+# 'min_child_weight':np.arange(1,6,2)
+}
+
+gsearch1 = GridSearchCV(estimator = XGBRegressor( max_depth = 9,learning_rate = 0.1
+                                                 min_child_weight = 1 , subsample=0.8, 
+                                                 colsample_bytree=0.8, gamma = 0.1,
+                                                 n_estimators = 400, objective= 'reg:linear',
+                                                 nthread=4, scale_pos_weight=1, 
+                                                 seed=27), param_grid = param_test1, 
+scoring='neg_mean_squared_error',n_jobs=1,iid=False, cv=5)
+gsearch1.fit(X_train,y_train)
+print(gsearch1.best_params_, gsearch1.best_score_)
+print((-gsearch1.best_score_)**0.5)
